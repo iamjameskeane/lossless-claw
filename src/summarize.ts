@@ -972,6 +972,27 @@ function readModelRef(value: unknown): string {
   return typeof primary === "string" ? primary.trim() : "";
 }
 
+/**
+ * When a model ref contains a provider prefix (e.g. "qwen/qwen3.5-9b") but we also have
+ * an explicit provider hint, strip the embedded provider so the hint takes precedence.
+ *
+ * OpenRouter model refs like "qwen/qwen3.5-9b" should use the openrouter provider,
+ * not "qwen". Without this, parseModelRef() extracts "qwen" from the model string
+ * and ignores the separate providerHint.
+ */
+function stripEmbeddedProviderWhenProviderHintExists(
+  modelRef: string,
+  providerHint: string | undefined,
+  hasExplicitProvider: boolean,
+): string {
+  if (!hasExplicitProvider || !providerHint || !modelRef.includes("/")) {
+    return modelRef;
+  }
+  // Strip the provider prefix (everything before and including the slash)
+  const slashIndex = modelRef.indexOf("/");
+  return modelRef.slice(slashIndex + 1).trim();
+}
+
 /** Avoid retrying the same resolved provider/model pair across fallback levels. */
 function dedupeResolvedCandidates(
   candidates: ResolvedSummaryCandidate[],
@@ -1023,7 +1044,12 @@ function resolveSummaryCandidates(params: {
   const resolutionCandidates: SummaryResolutionCandidate[] = [
     {
       levelName: "environment variables",
-      modelRef: process.env.LCM_SUMMARY_MODEL?.trim() ?? "",
+      modelRef: stripEmbeddedProviderWhenProviderHintExists(
+        process.env.LCM_SUMMARY_MODEL?.trim() ?? "",
+        process.env.LCM_SUMMARY_PROVIDER?.trim() ||
+        (providerHint || undefined),
+        Boolean(process.env.LCM_SUMMARY_PROVIDER?.trim()),
+      ),
       providerHint:
         process.env.LCM_SUMMARY_PROVIDER?.trim() ||
         (providerHint || undefined),
@@ -1032,7 +1058,16 @@ function resolveSummaryCandidates(params: {
     },
     {
       levelName: "plugin config (lossless-claw)",
-      modelRef: readModelRef(nestedPluginConfig?.summaryModel),
+      modelRef: stripEmbeddedProviderWhenProviderHintExists(
+        readModelRef(nestedPluginConfig?.summaryModel),
+        (typeof nestedPluginConfig?.summaryProvider === "string"
+          ? nestedPluginConfig.summaryProvider.trim()
+          : "") || (providerHint || undefined),
+        Boolean(
+          typeof nestedPluginConfig?.summaryProvider === "string" &&
+            nestedPluginConfig.summaryProvider.trim(),
+        ),
+      ),
       providerHint:
         (typeof nestedPluginConfig?.summaryProvider === "string"
           ? nestedPluginConfig.summaryProvider.trim()
